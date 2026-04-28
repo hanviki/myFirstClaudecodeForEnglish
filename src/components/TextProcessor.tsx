@@ -115,7 +115,16 @@ export default function TextProcessor() {
     if (speakMode === 'slow') {
       stopAll()
     } else {
-      startSpeak(0.8, false)
+      stopAll()
+      setSpeakMode('slow')
+      speakingRef.current = true
+      const text = inputText.trim()
+      if (text) {
+        speak(text, 0.8, () => {
+          // 慢速朗读结束，自动回到 idle
+          if (speakingRef.current) stopAll()
+        })
+      }
     }
   }
 
@@ -123,7 +132,23 @@ export default function TextProcessor() {
     if (speakMode === 'loop') {
       stopAll()
     } else {
-      startSpeak(0.85, true)
+      stopAll()
+      loopRef.current = true
+      setSpeakMode('loop')
+      speakingRef.current = true
+      const text = inputText.trim()
+      if (text) {
+        function loopSpeak() {
+          speak(text, 0.85, () => {
+            if (loopRef.current && speakingRef.current) {
+              loopSpeak()
+            } else {
+              stopAll()
+            }
+          })
+        }
+        loopSpeak()
+      }
     }
   }
 

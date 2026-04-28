@@ -186,8 +186,6 @@ body {
     grid-template-columns: repeat(2, 1fr);
   }
 }
-<<<<<<< Updated upstream
-=======
 
 /* ===== Tab Navigation ===== */
 .tab-nav {
@@ -563,4 +561,3 @@ body {
 .tp-actions {
   flex-wrap: wrap;
 }
->>>>>>> Stashed changes

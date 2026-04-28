@@ -1,6 +1,22 @@
 import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 
+/** 词性缩写 → 英文全称 → 中文 */
+const POS_MAP: Record<string, { en: string; cn: string }> = {
+  adj: { en: 'adjective', cn: '形容词' },
+  adv: { en: 'adverb', cn: '副词' },
+  n:   { en: 'noun', cn: '名词' },
+  v:   { en: 'verb', cn: '动词' },
+  int: { en: 'interjection', cn: '感叹词' },
+  prep:{ en: 'preposition', cn: '介词' },
+  conj:{ en: 'conjunction', cn: '连词' },
+  pron:{ en: 'pronoun', cn: '代词' },
+  num: { en: 'numeral', cn: '数词' },
+  art: { en: 'article', cn: '冠词' },
+  det: { en: 'determiner', cn: '限定词' },
+  comb:{ en: 'combining form', cn: '组合词' },
+}
+
 /** 开发环境下替代 Cloudflare Function 处理 /node-functions/dict 请求 */
 function dictDevPlugin(): Plugin {
   return {
@@ -16,63 +32,72 @@ function dictDevPlugin(): Plugin {
           return
         }
 
-        /** 获取中文翻译 */
-        const translate = async (text: string): Promise<string> => {
-          try {
-            const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`)
-            if (!r.ok) return ''
-            const d = await r.json() as { responseData?: { translatedText?: string } }
-            return d?.responseData?.translatedText || ''
-          } catch { return '' }
-        }
+        try {
+          const apiRes = await fetch(
+            `http://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`,
+            { signal: AbortSignal.timeout(8000) }
+          )
 
-        // 并行请求英文释义和单词翻译
-        const dictRes = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`)
-
-        if (dictRes.status === 404) {
-          const chinese = await translate(word)
-          res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-          res.end(JSON.stringify({ error: `未找到单词 "${word}" 的释义`, chinese }))
-          return
-        }
-
-        if (!dictRes.ok) {
-          res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-          res.end(JSON.stringify({ error: `词典服务响应异常（${dictRes.status}）` }))
-          return
-        }
-
-        const data = await dictRes.json()
-        const entries: any[] = Array.isArray(data) ? data : [data]
-
-        // 收集所有待翻译文本（定义 + 例句），批量翻译
-        const textsToTranslate: string[] = [word]
-        for (const entry of entries) {
-          for (const meaning of entry.meanings || []) {
-            for (const def of meaning.definitions || []) {
-              textsToTranslate.push(def.definition)
-              if (def.example) textsToTranslate.push(def.example)
-            }
+          if (!apiRes.ok) {
+            res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+            res.end(JSON.stringify({ error: '词典服务暂时不可用，请稍后重试' }))
+            return
           }
-        }
-        const translatedTexts = await Promise.all(
-          textsToTranslate.map(t => translate(t))
-        )
 
-        // 回填翻译
-        let idx = 0
-        for (const entry of entries) {
-          entry.chinese = translatedTexts[idx++] || ''
-          for (const meaning of entry.meanings || []) {
-            for (const def of meaning.definitions || []) {
-              def.definitionCn = translatedTexts[idx++] || ''
-              if (def.example) def.exampleCn = translatedTexts[idx++] || ''
-            }
+          const data = await apiRes.json()
+          const ec = data.ec
+
+          if (!ec || !ec.word?.[0]) {
+            res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+            res.end(JSON.stringify({ error: `未找到单词 "${word}" 的释义` }))
+            return
           }
-        }
 
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-        res.end(JSON.stringify(entries))
+          const w = ec.word[0]
+          const firstCn = w.trs?.[0]?.tr?.[0]?.l?.i?.[0] || ''
+
+          const meanings: any[] = []
+          for (const tr of w.trs || []) {
+            const text: string = tr.tr?.[0]?.l?.i?.[0] || ''
+            if (!text) continue
+            const posMatch = text.match(/^(\w+)\.\s*(.*)/)
+            const posAbbr = posMatch ? posMatch[1].toLowerCase() : ''
+            const posInfo = POS_MAP[posAbbr]
+            const defText = posMatch ? posMatch[2] : text
+            const defs = defText.split(/[；;]/).map((s: string) => s.trim()).filter(Boolean)
+            if (defs.length === 0) defs.push(defText)
+            meanings.push({
+              partOfSpeech: posInfo?.en || posAbbr || '其他',
+              partOfSpeechCn: posInfo?.cn || posAbbr || '',
+              definitions: defs.map((d: string) => ({ definition: d })),
+            })
+          }
+
+          const examples: any[] = []
+          for (const s of data.blng_sents_part?.sentence || []) {
+            const en = s.sentence?.[0]?.['#text'] || ''
+            const cn = s.sentence_translation?.[0]?.['#text'] || ''
+            if (en && cn) examples.push({ en, cn })
+          }
+
+          const entry = {
+            word,
+            phonetic: w.usphone || w.ukphone || '',
+            phoneticUs: w.usphone || '',
+            phoneticUk: w.ukphone || '',
+            chinese: firstCn.replace(/^(\w+\.\s*)/, '').split(/[；;]/)[0]?.trim() || firstCn,
+            meanings,
+            examples,
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify([entry]))
+        } catch (e: any) {
+          const status = e?.name === 'TimeoutError' ? 504 : 500
+          const msg = status === 504 ? '词典服务响应超时，请稍后重试' : '词典服务暂时不可用，请稍后重试'
+          res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
+          res.end(JSON.stringify({ error: msg }))
+        }
       })
     }
   }

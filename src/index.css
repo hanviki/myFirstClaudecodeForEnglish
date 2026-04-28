@@ -517,6 +517,21 @@ body {
   line-height: 1.4;
 }
 
+.modal-examples-section {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-examples-section .modal-pos {
+  margin-bottom: 2px;
+}
+
+.modal-examples-section .modal-example-row {
+  margin-top: 0;
+}
+
 .modal-example-speak {
   background: none;
   border: none;

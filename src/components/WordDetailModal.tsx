@@ -26,32 +26,30 @@ function posChinese(pos: string): string {
   return posMap[pos.toLowerCase()] || pos
 }
 
-// ---------- Free Dictionary API types ----------
-export interface DictPhonetic {
-  text?: string
-  audio?: string
-}
-
+// ---------- Youdao API types ----------
 export interface DictDefinition {
   definition: string
-  example?: string
-  synonyms?: string[]
-  antonyms?: string[]
-  definitionCn?: string
-  exampleCn?: string
 }
 
 export interface DictMeaning {
   partOfSpeech: string
+  partOfSpeechCn: string
   definitions: DictDefinition[]
+}
+
+export interface DictExample {
+  en: string
+  cn: string
 }
 
 export interface DictEntry {
   word: string
   phonetic?: string
-  phonetics?: DictPhonetic[]
+  phoneticUs?: string
+  phoneticUk?: string
+  chinese: string
   meanings: DictMeaning[]
-  chinese?: string
+  examples: DictExample[]
 }
 
 // ---------- Component ----------
@@ -67,10 +65,11 @@ export default function WordDetailModal({ entries, onClose }: WordDetailModalPro
 
   const entry = entries[0]
 
-  // 找到第一个有文字的音标
+  // 找到可用的音标
   const phonetic =
     entry.phonetic ||
-    entry.phonetics?.find((p) => p.text)?.text ||
+    entry.phoneticUs ||
+    entry.phoneticUk ||
     ''
 
   return (
@@ -97,32 +96,38 @@ export default function WordDetailModal({ entries, onClose }: WordDetailModalPro
         <div className="modal-body">
           {entry.meanings.map((meaning, mi) => (
             <div key={mi} className="modal-meaning">
-              <span className="modal-pos">{posChinese(meaning.partOfSpeech)}</span>
+              <span className="modal-pos">{meaning.partOfSpeechCn || meaning.partOfSpeech}</span>
               <ol className="modal-definitions">
                 {meaning.definitions.slice(0, 3).map((def, di) => (
                   <li key={di} className="modal-def-item">
                     <p className="modal-def-text">{def.definition}</p>
-                    {def.definitionCn && <p className="modal-def-cn">{def.definitionCn}</p>}
-                    {def.example && (
-                      <div className="modal-example-row">
-                        <div className="modal-example-col">
-                          <p className="modal-example">"{def.example}"</p>
-                          {def.exampleCn && <p className="modal-example-cn">"{def.exampleCn}"</p>}
-                        </div>
-                        <button
-                          className="modal-example-speak"
-                          onClick={() => speak(def.example!)}
-                          title="朗读例句"
-                        >
-                          🔊
-                        </button>
-                      </div>
-                    )}
                   </li>
                 ))}
               </ol>
             </div>
           ))}
+
+          {/* 双语例句 */}
+          {entry.examples && entry.examples.length > 0 && (
+            <div className="modal-examples-section">
+              <span className="modal-pos">例句</span>
+              {entry.examples.slice(0, 3).map((ex, i) => (
+                <div key={i} className="modal-example-row">
+                  <div className="modal-example-col">
+                    <p className="modal-example">{ex.en}</p>
+                    <p className="modal-example-cn">{ex.cn}</p>
+                  </div>
+                  <button
+                    className="modal-example-speak"
+                    onClick={() => speak(ex.en)}
+                    title="朗读例句"
+                  >
+                    🔊
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

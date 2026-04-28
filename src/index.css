@@ -512,3 +512,16 @@ body {
     font-size: 20px;
   }
 }
+
+/* 朗读按钮激活态 */
+.tp-btn-active {
+  background: rgba(118, 75, 162, 0.18);
+  border-color: rgba(118, 75, 162, 0.5);
+  color: #7b4fa6;
+  font-weight: 600;
+}
+
+/* 按钮区自动换行（移动端三个按钮防溢出） */
+.tp-actions {
+  flex-wrap: wrap;
+}

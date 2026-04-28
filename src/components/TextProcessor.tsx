@@ -3,9 +3,9 @@ import { useSpeak } from '../hooks/useSpeak'
 import WordDetailModal from './WordDetailModal'
 import type { DictEntry } from './WordDetailModal'
 
-// 将文本拆分为 token 数组，纯字母单词标记为 word 类型
+type SpeakMode = 'idle' | 'normal' | 'slow' | 'loop'
+
 function tokenize(text: string): Array<{ value: string; isWord: boolean }> {
-  // 按"连续字母"和"非连续字母"分段
   const parts = text.split(/([A-Za-z]+)/)
   return parts
     .filter((p) => p.length > 0)
@@ -17,16 +17,16 @@ export default function TextProcessor() {
   const [tokens, setTokens] = useState<Array<{ value: string; isWord: boolean }>>([])
   const [processed, setProcessed] = useState(false)
 
-  // 弹窗状态
   const [modalEntries, setModalEntries] = useState<DictEntry[]>([])
   const [modalOpen, setModalOpen] = useState(false)
   const [loadingWord, setLoadingWord] = useState('')
   const [fetchError, setFetchError] = useState('')
 
-  // 朗读全文逐词高亮：highlightIndex 为当前高亮的 token 索引，-1 表示无高亮
   const [highlightIndex, setHighlightIndex] = useState(-1)
-  // 用于停止朗读的标志位
+  const [speakMode, setSpeakMode] = useState<SpeakMode>('idle')
+
   const speakingRef = useRef(false)
+  const loopRef = useRef(false)
 
   const { speak } = useSpeak()
 
@@ -38,19 +38,20 @@ export default function TextProcessor() {
     setFetchError('')
   }
 
-  function handleSpeakAll() {
+  function stopAll() {
+    speakingRef.current = false
+    loopRef.current = false
+    window.speechSynthesis.cancel()
+    setHighlightIndex(-1)
+    setSpeakMode('idle')
+  }
+
+  function startSpeak(rate: number, loop: boolean) {
     const text = inputText.trim()
     if (!text) return
 
-    // 若已在朗读，先停止
-    if (speakingRef.current) {
-      speakingRef.current = false
-      window.speechSynthesis.cancel()
-      setHighlightIndex(-1)
-      return
-    }
+    stopAll()
 
-    // 提取当前 tokens 中所有纯字母单词及其索引
     const wordIndices: Array<{ index: number; value: string }> = []
     const currentTokens = tokenize(text)
     currentTokens.forEach((token, i) => {
@@ -58,22 +59,26 @@ export default function TextProcessor() {
     })
 
     if (wordIndices.length === 0) {
-      speak(text)
+      speak(text, rate)
       return
     }
 
     speakingRef.current = true
-
-    // 取消可能存在的上一次朗读
-    window.speechSynthesis.cancel()
+    loopRef.current = loop
+    setSpeakMode(loop ? 'loop' : rate <= 0.8 ? 'slow' : 'normal')
 
     let cursor = 0
 
     function speakNext() {
-      // 停止标志或已读完所有单词
-      if (!speakingRef.current || cursor >= wordIndices.length) {
-        speakingRef.current = false
-        setHighlightIndex(-1)
+      if (!speakingRef.current) return
+
+      if (cursor >= wordIndices.length) {
+        if (loopRef.current && speakingRef.current) {
+          cursor = 0
+          speakNext()
+        } else {
+          stopAll()
+        }
         return
       }
 
@@ -82,11 +87,13 @@ export default function TextProcessor() {
 
       const utterance = new SpeechSynthesisUtterance(value)
       utterance.lang = 'en-US'
+      utterance.rate = rate
       utterance.onend = () => {
         cursor++
         speakNext()
       }
       utterance.onerror = () => {
+        if (!speakingRef.current) return
         cursor++
         speakNext()
       }
@@ -96,6 +103,30 @@ export default function TextProcessor() {
     speakNext()
   }
 
+  function handleSpeakAll() {
+    if (speakMode === 'normal') {
+      stopAll()
+    } else {
+      startSpeak(0.85, false)
+    }
+  }
+
+  function handleSpeakSlow() {
+    if (speakMode === 'slow') {
+      stopAll()
+    } else {
+      startSpeak(0.8, false)
+    }
+  }
+
+  function handleSpeakLoop() {
+    if (speakMode === 'loop') {
+      stopAll()
+    } else {
+      startSpeak(0.85, true)
+    }
+  }
+
   async function handleWordClick(word: string) {
     setFetchError('')
     setLoadingWord(word)
@@ -103,7 +134,6 @@ export default function TextProcessor() {
     try {
       const res = await fetch(`/node-functions/dict?word=${encodeURIComponent(word)}`)
       if (!res.ok) {
-        // 404 表示单词未找到
         if (res.status === 404) {
           setFetchError(`未找到单词 "${word}" 的释义`)
         } else {
@@ -116,14 +146,13 @@ export default function TextProcessor() {
       setModalEntries(data)
       setModalOpen(true)
     } catch {
-      setFetchError('网络错误，请检查连接')
+      setFetchError('查询失败，请稍后重试')
     } finally {
       setLoadingWord('')
     }
   }
 
-  // 判断朗读全文是否正在进行（用于按钮文案）
-  const isSpeakingAll = speakingRef.current
+  const canSpeak = !!inputText.trim()
 
   return (
     <div className="text-processor">
@@ -137,12 +166,7 @@ export default function TextProcessor() {
             setInputText(e.target.value)
             setProcessed(false)
             setFetchError('')
-            // 输入变更时停止朗读
-            if (speakingRef.current) {
-              speakingRef.current = false
-              window.speechSynthesis.cancel()
-              setHighlightIndex(-1)
-            }
+            if (speakingRef.current) stopAll()
           }}
         />
         <div className="tp-actions">
@@ -150,11 +174,25 @@ export default function TextProcessor() {
             处理
           </button>
           <button
-            className="tp-btn tp-btn-secondary"
+            className={['tp-btn tp-btn-secondary', speakMode === 'normal' ? 'tp-btn-active' : ''].filter(Boolean).join(' ')}
             onClick={handleSpeakAll}
-            disabled={!inputText.trim()}
+            disabled={!canSpeak}
           >
-            {isSpeakingAll ? '⏹ 停止朗读' : '🔊 朗读全文'}
+            {speakMode === 'normal' ? '⏹ 停止朗读' : '🔊 朗读全文'}
+          </button>
+          <button
+            className={['tp-btn tp-btn-secondary', speakMode === 'slow' ? 'tp-btn-active' : ''].filter(Boolean).join(' ')}
+            onClick={handleSpeakSlow}
+            disabled={!canSpeak}
+          >
+            {speakMode === 'slow' ? '⏹ 停止朗读' : '🐢 慢速朗读'}
+          </button>
+          <button
+            className={['tp-btn tp-btn-secondary', speakMode === 'loop' ? 'tp-btn-active' : ''].filter(Boolean).join(' ')}
+            onClick={handleSpeakLoop}
+            disabled={!canSpeak}
+          >
+            {speakMode === 'loop' ? '⏹ 停止循环' : '🔁 循环朗读'}
           </button>
         </div>
       </div>

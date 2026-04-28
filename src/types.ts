@@ -3,6 +3,7 @@ export interface Word {
   english: string
   chinese: string
   emoji: string
+  phonetic?: string
 }
 
 export interface Category {

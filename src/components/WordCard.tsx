@@ -15,6 +15,7 @@ export default function WordCard({ word, showTranslation, onSpeak }: Props) {
     >
       <span className="word-emoji">{word.emoji}</span>
       <span className="word-english">{word.english}</span>
+      {word.phonetic && <span className="word-phonetic">{word.phonetic}</span>}
       {showTranslation && (
         <span className="word-chinese">{word.chinese}</span>
       )}

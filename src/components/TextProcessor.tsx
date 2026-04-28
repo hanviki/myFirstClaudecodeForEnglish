@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useSpeak } from '../hooks/useSpeak'
 import WordDetailModal from './WordDetailModal'
 import type { DictEntry } from './WordDetailModal'
@@ -23,6 +23,11 @@ export default function TextProcessor() {
   const [loadingWord, setLoadingWord] = useState('')
   const [fetchError, setFetchError] = useState('')
 
+  // 朗读全文逐词高亮：highlightIndex 为当前高亮的 token 索引，-1 表示无高亮
+  const [highlightIndex, setHighlightIndex] = useState(-1)
+  // 用于停止朗读的标志位
+  const speakingRef = useRef(false)
+
   const { speak } = useSpeak()
 
   function handleProcess() {
@@ -35,7 +40,60 @@ export default function TextProcessor() {
 
   function handleSpeakAll() {
     const text = inputText.trim()
-    if (text) speak(text)
+    if (!text) return
+
+    // 若已在朗读，先停止
+    if (speakingRef.current) {
+      speakingRef.current = false
+      window.speechSynthesis.cancel()
+      setHighlightIndex(-1)
+      return
+    }
+
+    // 提取当前 tokens 中所有纯字母单词及其索引
+    const wordIndices: Array<{ index: number; value: string }> = []
+    const currentTokens = tokenize(text)
+    currentTokens.forEach((token, i) => {
+      if (token.isWord) wordIndices.push({ index: i, value: token.value })
+    })
+
+    if (wordIndices.length === 0) {
+      speak(text)
+      return
+    }
+
+    speakingRef.current = true
+
+    // 取消可能存在的上一次朗读
+    window.speechSynthesis.cancel()
+
+    let cursor = 0
+
+    function speakNext() {
+      // 停止标志或已读完所有单词
+      if (!speakingRef.current || cursor >= wordIndices.length) {
+        speakingRef.current = false
+        setHighlightIndex(-1)
+        return
+      }
+
+      const { index, value } = wordIndices[cursor]
+      setHighlightIndex(index)
+
+      const utterance = new SpeechSynthesisUtterance(value)
+      utterance.lang = 'en-US'
+      utterance.onend = () => {
+        cursor++
+        speakNext()
+      }
+      utterance.onerror = () => {
+        cursor++
+        speakNext()
+      }
+      window.speechSynthesis.speak(utterance)
+    }
+
+    speakNext()
   }
 
   async function handleWordClick(word: string) {
@@ -64,6 +122,9 @@ export default function TextProcessor() {
     }
   }
 
+  // 判断朗读全文是否正在进行（用于按钮文案）
+  const isSpeakingAll = speakingRef.current
+
   return (
     <div className="text-processor">
       <div className="tp-input-area">
@@ -76,6 +137,12 @@ export default function TextProcessor() {
             setInputText(e.target.value)
             setProcessed(false)
             setFetchError('')
+            // 输入变更时停止朗读
+            if (speakingRef.current) {
+              speakingRef.current = false
+              window.speechSynthesis.cancel()
+              setHighlightIndex(-1)
+            }
           }}
         />
         <div className="tp-actions">
@@ -87,7 +154,7 @@ export default function TextProcessor() {
             onClick={handleSpeakAll}
             disabled={!inputText.trim()}
           >
-            🔊 朗读全文
+            {isSpeakingAll ? '⏹ 停止朗读' : '🔊 朗读全文'}
           </button>
         </div>
       </div>
@@ -100,7 +167,13 @@ export default function TextProcessor() {
             token.isWord ? (
               <span
                 key={i}
-                className={`word-token${loadingWord === token.value.toLowerCase() ? ' word-token--loading' : ''}`}
+                className={[
+                  'word-token',
+                  loadingWord === token.value.toLowerCase() ? 'word-token--loading' : '',
+                  highlightIndex === i ? 'speaking' : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 onClick={() => handleWordClick(token.value.toLowerCase())}
                 title="点击查看释义"
               >

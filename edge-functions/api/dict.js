@@ -84,7 +84,7 @@ export function onRequestGet(context) {
   }
 
   return fetch(
-    `http://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`,
+    `https://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`,
     { signal: AbortSignal.timeout(8000) }
   ).then(async (res) => {
     if (!res.ok) {

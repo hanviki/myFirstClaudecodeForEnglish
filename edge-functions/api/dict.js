@@ -1,12 +1,8 @@
 /**
- * EdgeOne 边缘函数 — 词典查询代理
+ * EdgeOne Pages Edge Function — 词典查询代理
  *
- * 部署步骤：
- * 1. 登录 EdgeOne 控制台 → 边缘函数 → 函数管理 → 新建函数
- * 2. 将本文件内容粘贴到代码编辑器，点击"创建并部署"
- * 3. 配置触发规则：匹配类型 URL Path、运算符 等于、值 /api/dict
- *
- * 功能：将前端 /api/dict?word=go 请求转发到有道词典 API
+ * 文件路径 edge-functions/api/dict.js → 访问路由 /api/dict
+ * 自动部署：推送到 Git 仓库后，EdgeOne Pages 自动构建部署
  */
 
 const POS_MAP = {
@@ -70,27 +66,31 @@ function buildEntry(word, youdaoData) {
   }
 }
 
-async function handleRequest(request) {
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Content-Type': 'application/json',
+}
+
+export function onRequestGet(context) {
+  const { request } = context
   const url = new URL(request.url)
   const word = url.searchParams.get('word')
 
   if (!word) {
     return new Response(JSON.stringify({ error: 'word is required' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
     })
   }
 
-  try {
-    const res = await fetch(
-      `http://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`,
-      { signal: AbortSignal.timeout(8000) }
-    )
-
+  return fetch(
+    `http://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`,
+    { signal: AbortSignal.timeout(8000) }
+  ).then(async (res) => {
     if (!res.ok) {
       return new Response(
         JSON.stringify({ error: '词典服务暂时不可用，请稍后重试' }),
-        { status: 502, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+        { status: 502, headers: CORS_HEADERS }
       )
     }
 
@@ -100,26 +100,22 @@ async function handleRequest(request) {
     if (!entry) {
       return new Response(
         JSON.stringify({ error: `未找到单词 "${word}" 的释义` }),
-        { status: 404, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+        { status: 404, headers: CORS_HEADERS }
       )
     }
 
     return new Response(JSON.stringify([entry]), {
       status: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
     })
-  } catch (e) {
+  }).catch((e) => {
     const status = e?.name === 'TimeoutError' ? 504 : 500
     const msg = status === 504
       ? '词典服务响应超时，请稍后重试'
       : '词典服务暂时不可用，请稍后重试'
     return new Response(JSON.stringify({ error: msg }), {
       status,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers: CORS_HEADERS,
     })
-  }
+  })
 }
-
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request))
-})

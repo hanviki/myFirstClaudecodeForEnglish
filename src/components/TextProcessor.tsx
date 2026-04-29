@@ -172,20 +172,10 @@ export default function TextProcessor() {
       const dictData = await dictRes.json()
       const entry = dictData[0]
 
-      // 2. 翻译单词本身
-      let chinese = ''
-      try {
-        const transRes = await fetch(
-          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|zh-CN`
-        )
-        const transData = await transRes.json()
-        chinese = transData?.responseData?.translatedText || ''
-      } catch { /* 忽略 */ }
-
       // 取音标
       const phonetic = entry.phonetics?.find((p: any) => p.text)?.text || ''
 
-      // 3. 收集需要翻译的文本（释义 + 例句）
+      // 2. 收集需要翻译的文本（释义 + 例句）
       const translateTexts: string[] = []
       for (const m of entry.meanings || []) {
         for (const d of m.definitions || []) {
@@ -216,11 +206,10 @@ export default function TextProcessor() {
         })
       }
 
-      // 5. 构建 DictEntry
+      // 4. 构建 DictEntry
       const result: DictEntry = {
         word: entry.word,
         phonetic,
-        chinese,
         meanings: (entry.meanings || []).map((m: any) => ({
           partOfSpeech: m.partOfSpeech || '',
           definitions: (m.definitions || []).map((d: any) => ({

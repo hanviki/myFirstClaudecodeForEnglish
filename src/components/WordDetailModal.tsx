@@ -62,11 +62,10 @@ export default function WordDetailModal({ entries, onClose }: WordDetailModalPro
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        {/* 标题行 */}
+        {/* 标题行：只显示单词和音标，释义中文在下面 */}
         <div className="modal-header">
           <h2 className="modal-word">{entry.word}</h2>
           {entry.phonetic && <span className="modal-phonetic">{entry.phonetic}</span>}
-          {entry.chinese && <span className="modal-chinese">{entry.chinese}</span>}
           <button
             className="modal-speak-btn"
             onClick={() => speak(entry.word)}

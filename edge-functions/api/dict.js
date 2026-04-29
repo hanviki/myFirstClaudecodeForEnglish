@@ -1,6 +1,71 @@
 /**
  * EdgeOne Pages Edge Function — 词典查询代理
+ *
+ * 文件路径 edge-functions/api/dict.js → 访问路由 /api/dict
+ * 将前端请求转发到有道词典 API，解析后返回结构化数据
  */
+
+const POS_MAP = {
+  adj: { en: 'adjective', cn: '形容词' },
+  adv: { en: 'adverb', cn: '副词' },
+  n:   { en: 'noun', cn: '名词' },
+  v:   { en: 'verb', cn: '动词' },
+  int: { en: 'interjection', cn: '感叹词' },
+  prep:{ en: 'preposition', cn: '介词' },
+  conj:{ en: 'conjunction', cn: '连词' },
+  pron:{ en: 'pronoun', cn: '代词' },
+  num: { en: 'numeral', cn: '数词' },
+  art: { en: 'article', cn: '冠词' },
+  det: { en: 'determiner', cn: '限定词' },
+  comb:{ en: 'combining form', cn: '组合词' },
+  pref:{ en: 'prefix', cn: '前缀' },
+  suff:{ en: 'suffix', cn: '后缀' },
+}
+
+function buildEntry(word, youdaoData) {
+  const ec = youdaoData.ec
+  if (!ec || !ec.word?.[0]) return null
+
+  const w = ec.word[0]
+  const firstCn = w.trs?.[0]?.tr?.[0]?.l?.i?.[0] || ''
+
+  const meanings = []
+  for (const tr of w.trs || []) {
+    const text = tr.tr?.[0]?.l?.i?.[0] || ''
+    if (!text) continue
+
+    const posMatch = text.match(/^(\w+)\.\s*(.*)/)
+    const posAbbr = posMatch ? posMatch[1].toLowerCase() : ''
+    const posInfo = POS_MAP[posAbbr]
+    const defText = posMatch ? posMatch[2] : text
+    const defs = defText.split(/[；;]/).map(s => s.trim()).filter(Boolean)
+    if (defs.length === 0) defs.push(defText)
+
+    meanings.push({
+      partOfSpeech: posInfo?.en || posAbbr || '其他',
+      partOfSpeechCn: posInfo?.cn || posAbbr || '',
+      definitions: defs.map(d => ({ definition: d })),
+    })
+  }
+
+  const examples = []
+  for (const s of youdaoData.blng_sents_part?.sentence || []) {
+    const en = s.sentence?.[0]?.['#text'] || ''
+    const cn = s.sentence_translation?.[0]?.['#text'] || ''
+    if (en && cn) examples.push({ en, cn })
+  }
+
+  return {
+    word,
+    phonetic: w.usphone || w.ukphone || '',
+    phoneticUs: w.usphone || '',
+    phoneticUk: w.ukphone || '',
+    chinese: firstCn.replace(/^(\w+\.\s*)/, '').split(/[；;]/)[0]?.trim() || firstCn,
+    meanings,
+    examples,
+  }
+}
+
 export async function onRequestGet(context) {
   const { request } = context
   const url = new URL(request.url)
@@ -14,7 +79,6 @@ export async function onRequestGet(context) {
   }
 
   try {
-    // 使用 AbortController 实现超时（兼容性更好）
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 8000)
 
@@ -25,26 +89,33 @@ export async function onRequestGet(context) {
     clearTimeout(timeout)
 
     if (!res.ok) {
-      return new Response(JSON.stringify({ error: '上游返回异常', status: res.status }), {
-        status: 502,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      })
+      return new Response(
+        JSON.stringify({ error: '词典服务暂时不可用，请稍后重试' }),
+        { status: 502, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+      )
     }
 
     const data = await res.json()
+    const entry = buildEntry(word, data)
 
-    // 直接将有道原始数据返回给前端（前端解析）
-    return new Response(JSON.stringify({ raw: data, word }), {
+    if (!entry) {
+      return new Response(
+        JSON.stringify({ error: `未找到单词 "${word}" 的释义` }),
+        { status: 404, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }
+      )
+    }
+
+    return new Response(JSON.stringify({ data: [entry] }), {
       status: 200,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     })
   } catch (e) {
-    return new Response(JSON.stringify({
-      error: '请求异常',
-      name: e?.name || typeof e,
-      message: e?.message || String(e),
-    }), {
-      status: 500,
+    const status = e?.name === 'AbortError' ? 504 : 500
+    const msg = status === 504
+      ? '词典服务响应超时，请稍后重试'
+      : '词典服务暂时不可用，请稍后重试'
+    return new Response(JSON.stringify({ error: msg }), {
+      status,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     })
   }

@@ -576,28 +576,3 @@ body {
 .tp-actions {
   flex-wrap: wrap;
 }
-
-/* ===== 调试日志 ===== */
-.tp-debug {
-  margin-top: 8px;
-  padding: 8px 12px;
-  background: #1e1e1e;
-  border-radius: 8px;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.tp-debug summary {
-  color: #888;
-  cursor: pointer;
-  font-size: 13px;
-  user-select: none;
-}
-
-.tp-debug pre {
-  margin-top: 6px;
-  color: #b0b0b0;
-  white-space: pre-wrap;
-  font-family: 'Courier New', monospace;
-  font-size: 11px;
-}

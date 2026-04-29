@@ -21,7 +21,6 @@ export default function TextProcessor() {
   const [modalOpen, setModalOpen] = useState(false)
   const [loadingWord, setLoadingWord] = useState('')
   const [fetchError, setFetchError] = useState('')
-  const [fetchDebug, setFetchDebug] = useState<string[]>([])
 
   const [highlightIndex, setHighlightIndex] = useState(-1)
   const [speakMode, setSpeakMode] = useState<SpeakMode>('idle')
@@ -153,35 +152,65 @@ export default function TextProcessor() {
     }
   }
 
+  /** 从 Free Dictionary API 获取英文释义 + 从 MyMemory 获取中文翻译 */
   async function handleWordClick(word: string) {
     setFetchError('')
-    setFetchDebug([])
     setLoadingWord(word)
     setModalOpen(false)
+
     try {
-      const res = await fetch(`/api/dict?word=${encodeURIComponent(word)}`)
-      const body = await res.json().catch(() => null)
-      // 提取调试日志（如果有）
-      if (body?._debug) {
-        setFetchDebug(body._debug.map((d: any) => `[${d.step}] ${d.status} — ${d.detail}`))
+      // 并行请求两个 API
+      const [dictRes, transRes] = await Promise.all([
+        fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`),
+        fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|zh-CN`),
+      ])
+
+      // 如果词典查不到，提前报错
+      if (!dictRes.ok) {
+        setFetchError(word ? `未找到单词 "${word}" 的释义` : '查询失败')
+        setLoadingWord('')
+        return
       }
-      if (!res.ok) {
-        if (res.status === 404) {
-          setFetchError(`未找到单词 "${word}" 的释义`)
-        } else {
-          setFetchError(body?.error || `查询失败 (${res.status})`)
+
+      // 解析 Free Dictionary 数据
+      const dictData = await dictRes.json()
+      const entry = dictData[0]
+
+      // 解析 MyMemory 翻译
+      let chinese = ''
+      try {
+        const transData = await transRes.json()
+        chinese = transData?.responseData?.translatedText || ''
+      } catch { /* 翻译失败不影响词典展示 */ }
+
+      // 取第一个有文本的音标
+      const phonetic = entry.phonetics?.find((p: any) => p.text)?.text?.replace('/', '')?.replace('/', '') || ''
+
+      // 构建 DictEntry
+      const result: DictEntry = {
+        word: entry.word,
+        phonetic,
+        phoneticUs: '',
+        phoneticUk: '',
+        chinese,
+        meanings: (entry.meanings || []).map((m: any) => ({
+          partOfSpeech: m.partOfSpeech || '',
+          partOfSpeechCn: '',
+          definitions: (m.definitions || []).map((d: any) => ({ definition: d.definition })),
+        })),
+        examples: [],
+      }
+
+      // 提取例句（从定义中找有 example 的）
+      for (const m of entry.meanings || []) {
+        for (const d of m.definitions || []) {
+          if (d.example && result.examples.length < 3) {
+            result.examples.push({ en: d.example, cn: '' })
+          }
         }
-        setLoadingWord('')
-        return
       }
-      // 兼容两种返回格式：直接数组 或 { data: [...] }
-      const entries: DictEntry[] = body?.data ?? (Array.isArray(body) ? body : [])
-      if (entries.length === 0) {
-        setFetchError('未找到释义')
-        setLoadingWord('')
-        return
-      }
-      setModalEntries(entries)
+
+      setModalEntries([result])
       setModalOpen(true)
     } catch (e: any) {
       setFetchError(`请求异常: ${e?.message || '未知错误'}`)
@@ -236,13 +265,6 @@ export default function TextProcessor() {
       </div>
 
       {fetchError && <p className="tp-error">{fetchError}</p>}
-
-      {fetchDebug.length > 0 && (
-        <details className="tp-debug">
-          <summary>调试日志</summary>
-          <pre>{fetchDebug.join('\n')}</pre>
-        </details>
-      )}
 
       {processed && tokens.length > 0 && (
         <div className="tp-output">

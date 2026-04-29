@@ -21,6 +21,7 @@ export default function TextProcessor() {
   const [modalOpen, setModalOpen] = useState(false)
   const [loadingWord, setLoadingWord] = useState('')
   const [fetchError, setFetchError] = useState('')
+  const [fetchDebug, setFetchDebug] = useState<string[]>([])
 
   const [highlightIndex, setHighlightIndex] = useState(-1)
   const [speakMode, setSpeakMode] = useState<SpeakMode>('idle')
@@ -154,24 +155,36 @@ export default function TextProcessor() {
 
   async function handleWordClick(word: string) {
     setFetchError('')
+    setFetchDebug([])
     setLoadingWord(word)
     setModalOpen(false)
     try {
       const res = await fetch(`/api/dict?word=${encodeURIComponent(word)}`)
+      const body = await res.json().catch(() => null)
+      // 提取调试日志（如果有）
+      if (body?._debug) {
+        setFetchDebug(body._debug.map((d: any) => `[${d.step}] ${d.status} — ${d.detail}`))
+      }
       if (!res.ok) {
         if (res.status === 404) {
           setFetchError(`未找到单词 "${word}" 的释义`)
         } else {
-          setFetchError('查询失败，请稍后重试')
+          setFetchError(body?.error || `查询失败 (${res.status})`)
         }
         setLoadingWord('')
         return
       }
-      const data: DictEntry[] = await res.json()
-      setModalEntries(data)
+      // 兼容两种返回格式：直接数组 或 { data: [...] }
+      const entries: DictEntry[] = body?.data ?? (Array.isArray(body) ? body : [])
+      if (entries.length === 0) {
+        setFetchError('未找到释义')
+        setLoadingWord('')
+        return
+      }
+      setModalEntries(entries)
       setModalOpen(true)
-    } catch {
-      setFetchError('查询失败，请稍后重试')
+    } catch (e: any) {
+      setFetchError(`请求异常: ${e?.message || '未知错误'}`)
     } finally {
       setLoadingWord('')
     }
@@ -223,6 +236,13 @@ export default function TextProcessor() {
       </div>
 
       {fetchError && <p className="tp-error">{fetchError}</p>}
+
+      {fetchDebug.length > 0 && (
+        <details className="tp-debug">
+          <summary>调试日志</summary>
+          <pre>{fetchDebug.join('\n')}</pre>
+        </details>
+      )}
 
       {processed && tokens.length > 0 && (
         <div className="tp-output">

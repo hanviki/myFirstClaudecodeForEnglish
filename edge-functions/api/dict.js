@@ -1,8 +1,10 @@
 /**
- * EdgeOne Pages Edge Function — 词典查询代理
+ * EdgeOne Pages Edge Function — 词典查询代理（调试模式）
  *
  * 文件路径 edge-functions/api/dict.js → 访问路由 /api/dict
  * 自动部署：推送到 Git 仓库后，EdgeOne Pages 自动构建部署
+ *
+ * 调试：返回体中包含 _debug 字段，记录每一步的执行状态
  */
 
 const POS_MAP = {
@@ -69,53 +71,99 @@ function buildEntry(word, youdaoData) {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Content-Type': 'application/json',
+  'X-Dict-Debug': 'enabled',
 }
 
 export function onRequestGet(context) {
   const { request } = context
   const url = new URL(request.url)
   const word = url.searchParams.get('word')
+  const logs = [] // 调试日志
+  const startTime = Date.now()
+
+  function log(step, status, detail) {
+    const entry = { step, status, time: Date.now() - startTime + 'ms', detail }
+    logs.push(entry)
+    console.log(`[dict] step=${step} status=${status} detail=${detail}`)
+  }
+
+  log('start', 'ok', `request.url=${request.url}`)
+  log('parse_url', 'ok', `word=${word}`)
 
   if (!word) {
-    return new Response(JSON.stringify({ error: 'word is required' }), {
+    log('validate', 'fail', 'word参数为空')
+    return new Response(JSON.stringify({ error: 'word is required', _debug: logs }), {
       status: 400,
       headers: CORS_HEADERS,
     })
   }
 
-  return fetch(
-    `https://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`,
-    { signal: AbortSignal.timeout(8000) }
-  ).then(async (res) => {
-    if (!res.ok) {
-      return new Response(
-        JSON.stringify({ error: '词典服务暂时不可用，请稍后重试' }),
-        { status: 502, headers: CORS_HEADERS }
-      )
-    }
+  log('validate', 'ok', 'word参数正常')
 
-    const data = await res.json()
-    const entry = buildEntry(word, data)
+  const youdaoUrl = `https://dict.youdao.com/jsonapi?q=${encodeURIComponent(word)}`
+  log('fetch_start', 'ok', `目标URL=${youdaoUrl}`)
 
-    if (!entry) {
-      return new Response(
-        JSON.stringify({ error: `未找到单词 "${word}" 的释义` }),
-        { status: 404, headers: CORS_HEADERS }
-      )
-    }
+  return fetch(youdaoUrl, { signal: AbortSignal.timeout(8000) })
+    .then(async (res) => {
+      log('fetch_response', 'ok', `状态码=${res.status} ${res.statusText}`)
 
-    return new Response(JSON.stringify([entry]), {
-      status: 200,
-      headers: CORS_HEADERS,
+      // 记录响应头（用于诊断）
+      const respHeaders = {}
+      res.headers.forEach((v, k) => { respHeaders[k] = v })
+      log('fetch_headers', 'ok', JSON.stringify(respHeaders))
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => '读取body失败')
+        log('fetch_not_ok', 'fail', `状态码=${res.status} body=${body.substring(0, 500)}`)
+        return new Response(JSON.stringify({
+          error: '词典服务暂时不可用',
+          _debug: logs,
+        }), { status: 502, headers: CORS_HEADERS })
+      }
+
+      log('parse_json', 'start', '开始解析响应JSON')
+      let data
+      try {
+        data = await res.json()
+        log('parse_json', 'ok', `JSON解析成功，顶层key=${Object.keys(data).join(',')}`)
+      } catch (e) {
+        log('parse_json', 'fail', `JSON解析失败: ${e.message}`)
+        return new Response(JSON.stringify({
+          error: '词典响应解析失败',
+          _debug: logs,
+        }), { status: 502, headers: CORS_HEADERS })
+      }
+
+      log('build_entry', 'start', '开始构建词典条目')
+      const entry = buildEntry(word, data)
+
+      if (!entry) {
+        log('build_entry', 'fail', `ec=${!!data.ec} ec.word=${data.ec?.word?.length ?? 0}`)
+        return new Response(JSON.stringify({
+          error: `未找到单词 "${word}" 的释义`,
+          _debug: logs,
+        }), { status: 404, headers: CORS_HEADERS })
+      }
+
+      log('build_entry', 'ok', `释义=${entry.chinese} 词义数=${entry.meanings.length} 例句数=${entry.examples.length}`)
+      log('complete', 'ok', `总耗时=${Date.now() - startTime}ms`)
+
+      return new Response(JSON.stringify({ data: [entry], _debug: logs }), {
+        status: 200,
+        headers: CORS_HEADERS,
+      })
     })
-  }).catch((e) => {
-    const status = e?.name === 'TimeoutError' ? 504 : 500
-    const msg = status === 504
-      ? '词典服务响应超时，请稍后重试'
-      : '词典服务暂时不可用，请稍后重试'
-    return new Response(JSON.stringify({ error: msg }), {
-      status,
-      headers: CORS_HEADERS,
+    .catch((e) => {
+      log('catch', 'error', `类型=${e?.name} 消息=${e?.message}`)
+      log('complete', 'fail', `总耗时=${Date.now() - startTime}ms`)
+
+      return new Response(JSON.stringify({
+        error: '词典服务暂时不可用',
+        detail: { name: e?.name, message: e?.message },
+        _debug: logs,
+      }), {
+        status: 502,
+        headers: CORS_HEADERS,
+      })
     })
-  })
 }

@@ -17,12 +17,12 @@ const POS_MAP: Record<string, { en: string; cn: string }> = {
   comb:{ en: 'combining form', cn: '组合词' },
 }
 
-/** 开发环境下替代 Cloudflare Function 处理 /node-functions/dict 请求 */
+/** 开发环境下替代 EdgeOne 边缘函数处理 /api/dict 请求 */
 function dictDevPlugin(): Plugin {
   return {
     name: 'dict-dev',
     configureServer(server) {
-      server.middlewares.use('/node-functions/dict', async (req, res) => {
+      server.middlewares.use('/api/dict', async (req, res) => {
         const url = new URL(req.url || '', 'http://localhost')
         const word = url.searchParams.get('word')
 

@@ -157,7 +157,7 @@ export default function TextProcessor() {
     setLoadingWord(word)
     setModalOpen(false)
     try {
-      const res = await fetch(`/node-functions/dict?word=${encodeURIComponent(word)}`)
+      const res = await fetch(`/api/dict?word=${encodeURIComponent(word)}`)
       if (!res.ok) {
         if (res.status === 404) {
           setFetchError(`未找到单词 "${word}" 的释义`)

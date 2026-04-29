@@ -152,62 +152,84 @@ export default function TextProcessor() {
     }
   }
 
-  /** 从 Free Dictionary API 获取英文释义 + 从 MyMemory 获取中文翻译 */
+  /** 从 Free Dictionary API 获取英文释义 + 从 MyMemory 获取中英文翻译 */
   async function handleWordClick(word: string) {
     setFetchError('')
     setLoadingWord(word)
     setModalOpen(false)
 
     try {
-      // 并行请求两个 API
-      const [dictRes, transRes] = await Promise.all([
-        fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`),
-        fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|zh-CN`),
-      ])
-
-      // 如果词典查不到，提前报错
+      // 1. 获取英文词典数据
+      const dictRes = await fetch(
+        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`
+      )
       if (!dictRes.ok) {
-        setFetchError(word ? `未找到单词 "${word}" 的释义` : '查询失败')
+        setFetchError(`未找到单词 "${word}" 的释义`)
         setLoadingWord('')
         return
       }
 
-      // 解析 Free Dictionary 数据
       const dictData = await dictRes.json()
       const entry = dictData[0]
 
-      // 解析 MyMemory 翻译
+      // 2. 翻译单词本身
       let chinese = ''
       try {
+        const transRes = await fetch(
+          `https://api.mymemory.translated.net/get?q=${encodeURIComponent(word)}&langpair=en|zh-CN`
+        )
         const transData = await transRes.json()
         chinese = transData?.responseData?.translatedText || ''
-      } catch { /* 翻译失败不影响词典展示 */ }
+      } catch { /* 忽略 */ }
 
-      // 取第一个有文本的音标
-      const phonetic = entry.phonetics?.find((p: any) => p.text)?.text?.replace('/', '')?.replace('/', '') || ''
+      // 取音标
+      const phonetic = entry.phonetics?.find((p: any) => p.text)?.text || ''
 
-      // 构建 DictEntry
+      // 3. 收集需要翻译的文本（释义 + 例句）
+      const translateTexts: string[] = []
+      for (const m of entry.meanings || []) {
+        for (const d of m.definitions || []) {
+          if (d.definition && !translateTexts.includes(d.definition)) {
+            translateTexts.push(d.definition)
+          }
+          if (d.example && !translateTexts.includes(d.example)) {
+            translateTexts.push(d.example)
+          }
+        }
+      }
+
+      // 4. 并行翻译所有文本
+      const transMap = new Map<string, string>()
+      if (translateTexts.length > 0) {
+        const batchRes = await Promise.allSettled(
+          translateTexts.map(text =>
+            fetch(
+              `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`
+            ).then(r => r.json())
+          )
+        )
+        batchRes.forEach((res, i) => {
+          if (res.status === 'fulfilled') {
+            const t = res.value?.responseData?.translatedText
+            if (t) transMap.set(translateTexts[i], t)
+          }
+        })
+      }
+
+      // 5. 构建 DictEntry
       const result: DictEntry = {
         word: entry.word,
         phonetic,
-        phoneticUs: '',
-        phoneticUk: '',
         chinese,
         meanings: (entry.meanings || []).map((m: any) => ({
           partOfSpeech: m.partOfSpeech || '',
-          partOfSpeechCn: '',
-          definitions: (m.definitions || []).map((d: any) => ({ definition: d.definition })),
+          definitions: (m.definitions || []).map((d: any) => ({
+            definition: d.definition,
+            example: d.example || undefined,
+            definitionCn: transMap.get(d.definition) || undefined,
+            exampleCn: d.example ? (transMap.get(d.example) || undefined) : undefined,
+          })),
         })),
-        examples: [],
-      }
-
-      // 提取例句（从定义中找有 example 的）
-      for (const m of entry.meanings || []) {
-        for (const d of m.definitions || []) {
-          if (d.example && result.examples.length < 3) {
-            result.examples.push({ en: d.example, cn: '' })
-          }
-        }
       }
 
       setModalEntries([result])

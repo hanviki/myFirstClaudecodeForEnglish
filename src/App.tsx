@@ -6,8 +6,9 @@ import CategoryGrid from './components/CategoryGrid'
 import WordCard from './components/WordCard'
 import TranslateToggle from './components/TranslateToggle'
 import TextProcessor from './components/TextProcessor'
+import AudioProcessor from './components/AudioProcessor'
 
-type Tab = 'words' | 'text'
+type Tab = 'words' | 'text' | 'audio'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('words')
@@ -32,6 +33,12 @@ export default function App() {
           onClick={() => setActiveTab('text')}
         >
           📝 文本处理
+        </button>
+        <button
+          className={`tab-btn${activeTab === 'audio' ? ' tab-btn--active' : ''}`}
+          onClick={() => setActiveTab('audio')}
+        >
+          🎧 音频点读
         </button>
       </nav>
 
@@ -81,6 +88,16 @@ export default function App() {
             <p className="subtitle">输入英文，点击单词查看释义</p>
           </header>
           <TextProcessor />
+        </>
+      )}
+
+      {activeTab === 'audio' && (
+        <>
+          <header className="app-header">
+            <h1>🎧 音频点读</h1>
+            <p className="subtitle">上传 MP3，逐句点读</p>
+          </header>
+          <AudioProcessor />
         </>
       )}
     </div>

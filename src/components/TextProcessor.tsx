@@ -1,26 +1,13 @@
-import { useState, useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useSpeak } from '../hooks/useSpeak'
-import WordDetailModal from './WordDetailModal'
-import type { DictEntry } from './WordDetailModal'
+import WordTokens from './WordTokens'
+import { tokenize } from '../utils/tokenize'
 
 type SpeakMode = 'idle' | 'normal' | 'slow' | 'loop'
 
-function tokenize(text: string): Array<{ value: string; isWord: boolean }> {
-  const parts = text.split(/([A-Za-z]+)/)
-  return parts
-    .filter((p) => p.length > 0)
-    .map((p) => ({ value: p, isWord: /^[A-Za-z]+$/.test(p) }))
-}
-
 export default function TextProcessor() {
   const [inputText, setInputText] = useState('')
-  const [tokens, setTokens] = useState<Array<{ value: string; isWord: boolean }>>([])
   const [processed, setProcessed] = useState(false)
-
-  const [modalEntries, setModalEntries] = useState<DictEntry[]>([])
-  const [modalOpen, setModalOpen] = useState(false)
-  const [loadingWord, setLoadingWord] = useState('')
-  const [fetchError, setFetchError] = useState('')
 
   const [highlightIndex, setHighlightIndex] = useState(-1)
   const [speakMode, setSpeakMode] = useState<SpeakMode>('idle')
@@ -33,9 +20,7 @@ export default function TextProcessor() {
   function handleProcess() {
     const text = inputText.trim()
     if (!text) return
-    setTokens(tokenize(text))
     setProcessed(true)
-    setFetchError('')
   }
 
   function stopAll() {
@@ -121,7 +106,6 @@ export default function TextProcessor() {
       const text = inputText.trim()
       if (text) {
         speak(text, 0.85, () => {
-          // 慢速朗读结束，自动回到 idle
           if (speakingRef.current) stopAll()
         })
       }
@@ -152,84 +136,6 @@ export default function TextProcessor() {
     }
   }
 
-  /** 从 Free Dictionary API 获取英文释义 + 从 MyMemory 获取中英文翻译 */
-  async function handleWordClick(word: string) {
-    setFetchError('')
-    setLoadingWord(word)
-    setModalOpen(false)
-
-    try {
-      // 1. 获取英文词典数据
-      const dictRes = await fetch(
-        `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`
-      )
-      if (!dictRes.ok) {
-        setFetchError(`未找到单词 "${word}" 的释义`)
-        setLoadingWord('')
-        return
-      }
-
-      const dictData = await dictRes.json()
-      const entry = dictData[0]
-
-      // 取音标
-      const phonetic = entry.phonetics?.find((p: any) => p.text)?.text || ''
-
-      // 2. 收集需要翻译的文本（释义 + 例句）
-      const translateTexts: string[] = []
-      for (const m of entry.meanings || []) {
-        for (const d of m.definitions || []) {
-          if (d.definition && !translateTexts.includes(d.definition)) {
-            translateTexts.push(d.definition)
-          }
-          if (d.example && !translateTexts.includes(d.example)) {
-            translateTexts.push(d.example)
-          }
-        }
-      }
-
-      // 4. 并行翻译所有文本
-      const transMap = new Map<string, string>()
-      if (translateTexts.length > 0) {
-        const batchRes = await Promise.allSettled(
-          translateTexts.map(text =>
-            fetch(
-              `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=en|zh-CN`
-            ).then(r => r.json())
-          )
-        )
-        batchRes.forEach((res, i) => {
-          if (res.status === 'fulfilled') {
-            const t = res.value?.responseData?.translatedText
-            if (t) transMap.set(translateTexts[i], t)
-          }
-        })
-      }
-
-      // 4. 构建 DictEntry
-      const result: DictEntry = {
-        word: entry.word,
-        phonetic,
-        meanings: (entry.meanings || []).map((m: any) => ({
-          partOfSpeech: m.partOfSpeech || '',
-          definitions: (m.definitions || []).map((d: any) => ({
-            definition: d.definition,
-            example: d.example || undefined,
-            definitionCn: transMap.get(d.definition) || undefined,
-            exampleCn: d.example ? (transMap.get(d.example) || undefined) : undefined,
-          })),
-        })),
-      }
-
-      setModalEntries([result])
-      setModalOpen(true)
-    } catch (e: any) {
-      setFetchError(`请求异常: ${e?.message || '未知错误'}`)
-    } finally {
-      setLoadingWord('')
-    }
-  }
-
   const canSpeak = !!inputText.trim()
 
   return (
@@ -243,7 +149,6 @@ export default function TextProcessor() {
           onChange={(e) => {
             setInputText(e.target.value)
             setProcessed(false)
-            setFetchError('')
             if (speakingRef.current) stopAll()
           }}
         />
@@ -275,40 +180,11 @@ export default function TextProcessor() {
         </div>
       </div>
 
-      {fetchError && <p className="tp-error">{fetchError}</p>}
-
-      {processed && tokens.length > 0 && (
+      {processed && inputText.trim() && (
         <div className="tp-output">
-          {tokens.map((token, i) =>
-            token.isWord ? (
-              <span
-                key={i}
-                className={[
-                  'word-token',
-                  loadingWord === token.value.toLowerCase() ? 'word-token--loading' : '',
-                  highlightIndex === i ? 'speaking' : ''
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-                onClick={() => handleWordClick(token.value.toLowerCase())}
-                title="点击查看释义"
-              >
-                {token.value}
-              </span>
-            ) : (
-              <span key={i} className="word-punct">
-                {token.value}
-              </span>
-            )
-          )}
+          {/* 复用模块 B 拆词组件:单词可点击查释义,highlightIndex 用于全文逐词朗读高亮 */}
+          <WordTokens text={inputText.trim()} highlightIndex={highlightIndex} />
         </div>
-      )}
-
-      {modalOpen && (
-        <WordDetailModal
-          entries={modalEntries}
-          onClose={() => setModalOpen(false)}
-        />
       )}
     </div>
   )

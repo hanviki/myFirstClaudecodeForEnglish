@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import WordTokens from './WordTokens'
-import { saveRecord, getAllRecords, deleteRecord } from '../utils/db'
-import type { AudioRecord } from '../utils/db'
-
+import { saveRecord, getAllRecords, deleteRecord, getGrammarCache, saveGrammarCache } from '../utils/db'
+import type { AudioRecord, GrammarAnalysis } from '../utils/db'
 import GrammarModal from './GrammarModal' 
-import { getGrammarCache, saveGrammarCache } from '../utils/db'
-import type { GrammarAnalysis } from '../utils/db'
 
 // ---------- 类型 ----------
 interface Sentence {
@@ -26,12 +23,12 @@ export default function AudioProcessor() {
   const [error, setError] = useState('')
   const [playingIndex, setPlayingIndex] = useState<number | null>(null)
 
-  // 💡 新增：D 弹窗相关状态
+  // D 弹窗相关状态
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [grammarData, setGrammarData] = useState<GrammarAnalysis | null>(null)
 
-  // 💡 新增：历史记录列表状态
+  // 历史记录列表状态
   const [historyList, setHistoryList] = useState<AudioRecord[]>([])
   const [currentRecordId, setCurrentRecordId] = useState<number | null>(null)
 
@@ -40,7 +37,6 @@ export default function AudioProcessor() {
   const activeIndexRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // 💡 新增：页面加载时，拉取历史记录
   useEffect(() => {
     loadHistory()
   }, [])
@@ -54,7 +50,6 @@ export default function AudioProcessor() {
     }
   }
 
-  // 释放上一次的 Object URL
   useEffect(() => {
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl)
@@ -119,7 +114,6 @@ export default function AudioProcessor() {
     stopPlayback()
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     
-    // 生成临时预览 URL
     const url = URL.createObjectURL(file)
     setAudioUrl(url)
     setFileName(file.name)
@@ -142,10 +136,9 @@ export default function AudioProcessor() {
       setSentences(parsedSentences)
       setStatus('ready')
 
-      // 💡 新增：解析成功后，把音频和字幕存入 IndexedDB
       const newRecord = await saveRecord(file.name, parsedSentences, file)
       setCurrentRecordId(newRecord.id)
-      loadHistory() // 刷新历史列表
+      loadHistory()
 
     } catch (err: any) {
       setError(`解析失败：${err?.message || '未知错误'}`)
@@ -153,8 +146,7 @@ export default function AudioProcessor() {
     }
   }
 
-
-    // 💡 新增：点击 D 按钮的分析逻辑
+  // 点击 D 按钮的分析逻辑
   async function handleAnalyze(text: string) {
     setIsModalOpen(true)
     setGrammarData(null)
@@ -177,7 +169,7 @@ export default function AudioProcessor() {
       const json = await res.json()
       if (json.code === 200) {
         setGrammarData(json.data)
-        await saveGrammarCache(json.data) // 存入 IndexedDB
+        await saveGrammarCache(json.data)
       } else {
         alert('解析失败：' + json.message)
       }
@@ -188,12 +180,11 @@ export default function AudioProcessor() {
     }
   }
 
-  // 💡 新增：点击历史记录列表中的某一项
+  // 点击历史记录列表中的某一项
   function handleSelectHistory(record: AudioRecord) {
     stopPlayback()
     if (audioUrl) URL.revokeObjectURL(audioUrl)
     
-    // 从 IndexedDB 取出 Blob，重新生成 URL 播放
     const url = URL.createObjectURL(record.audioBlob)
     setAudioUrl(url)
     setFileName(record.fileName)
@@ -202,15 +193,14 @@ export default function AudioProcessor() {
     setCurrentRecordId(record.id)
   }
 
-  // 💡 新增：删除历史记录
+  // 删除历史记录
   async function handleDeleteHistory(e: React.MouseEvent, id: number) {
-    e.stopPropagation() // 阻止冒泡，防止同时触发选中
+    e.stopPropagation()
     if (!confirm('确定要删除这条记录吗？')) return
 
     await deleteRecord(id)
-    loadHistory() // 刷新列表
+    loadHistory()
 
-    // 如果删除的正好是当前正在看的，清空当前页面
     if (currentRecordId === id) {
       stopPlayback()
       if (audioUrl) URL.revokeObjectURL(audioUrl)
@@ -225,7 +215,7 @@ export default function AudioProcessor() {
   return (
     <div className="audio-processor" style={{ display: 'flex', gap: '20px' }}>
       
-      {/* 💡 新增：左侧历史记录栏 */}
+      {/* 左侧历史记录栏 */}
       <div style={{ width: '250px', borderRight: '1px solid #eee', paddingRight: '10px' }}>
         <h3>📚 历史记录</h3>
         {historyList.length === 0 && <p style={{color: '#888', fontSize: '14px'}}>暂无记录</p>}
@@ -271,7 +261,7 @@ export default function AudioProcessor() {
 
         {status === 'ready' && sentences.length > 0 && (
           <ul className="ap-sentence-list">
-                        {sentences.map((s, i) => (
+            {sentences.map((s, i) => (
               <li key={i} className={`ap-sentence-row${playingIndex === i ? ' ap-sentence-row--active' : ''}`}>
                 <button className="ap-play-btn" onClick={() => handlePlay(i)} title="点击播放本句">
                   {playingIndex === i ? '⏸' : '▶'}
@@ -279,7 +269,6 @@ export default function AudioProcessor() {
                 <div className="ap-sentence-text">
                   <WordTokens text={s.text} />
                 </div>
-                {/* 💡 新增：D 按钮 */}
                 <button 
                   onClick={() => handleAnalyze(s.text)}
                   style={{ marginLeft: '10px', padding: '2px 8px', cursor: 'pointer' }}
@@ -294,12 +283,25 @@ export default function AudioProcessor() {
 
         {status === 'ready' && sentences.length === 0 && <p className="ap-status">未解析到任何句子。</p>}
       </div>
-        {/* 💡 新增：挂载语法分析弹窗 */}
+
+      {/* 挂载语法分析弹窗，传入播放相关属性 */}
       <GrammarModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         loading={isAnalyzing} 
         data={grammarData} 
+        playingIndex={playingIndex}
+        currentIndex={sentences.findIndex(s => s.text === grammarData?.text)}
+        onPlay={() => {
+          const idx = sentences.findIndex(s => s.text === grammarData?.text);
+          if (idx !== -1) {
+            if (activeIndexRef.current === idx) {
+              stopPlayback();
+            } else {
+              playSentence(idx);
+            }
+          }
+        }}
       />
     </div>
   )

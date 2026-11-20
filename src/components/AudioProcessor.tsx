@@ -1,63 +1,69 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import WordTokens from './WordTokens'
+import { saveRecord, getAllRecords, deleteRecord } from '../utils/db'
+import type { AudioRecord } from '../utils/db'
 
 // ---------- 类型 ----------
-/** 后端返回的单句片段结构 */
 interface Sentence {
   text: string
   start: number
   end: number
 }
 
-/** 页面所处阶段 */
 type Status = 'idle' | 'loading' | 'ready' | 'error'
-
-/** 后端解析接口地址(跨域问题由 Python 端处理) */
 const API_URL = 'http://127.0.0.1:8000/process-audio'
 
-/**
- * 模块 C —— 音频上传与点读(类似 EchoFlow)
- * 1. 上传 .mp3 → 调后端解析出句子片段
- * 2. 句子列表点读:点击某句播放,到该句 end 自动暂停
- * 3. 句子文本复用模块 B 的拆词组件(单词可点击查释义)
- */
 export default function AudioProcessor() {
-  // ---------- 状态设计 ----------
-  const [sentences, setSentences] = useState<Sentence[]>([])                 // 解析出的句子列表
-  const [audioUrl, setAudioUrl] = useState<string>('')                       // 本地音频 Object URL
-  const [fileName, setFileName] = useState('')                               // 文件名(展示用)
-  const [status, setStatus] = useState<Status>('idle')                       // 上传/解析阶段
-  const [error, setError] = useState('')                                     // 错误信息
-  const [playingIndex, setPlayingIndex] = useState<number | null>(null)      // 当前播放句索引(UI 高亮)
+  const [sentences, setSentences] = useState<Sentence[]>([])
+  const [audioUrl, setAudioUrl] = useState<string>('')
+  const [fileName, setFileName] = useState('')
+  const [status, setStatus] = useState<Status>('idle')
+  const [error, setError] = useState('')
+  const [playingIndex, setPlayingIndex] = useState<number | null>(null)
 
-  const audioRef = useRef<HTMLAudioElement | null>(null)                     // 隐藏 <audio> 元素引用
-  const activeEndRef = useRef(0)                                             // 当前句子的 end(timeupdate 判停用)
-  const activeIndexRef = useRef<number | null>(null)                         // 互斥:当前正在播的句子索引
+  // 💡 新增：历史记录列表状态
+  const [historyList, setHistoryList] = useState<AudioRecord[]>([])
+  const [currentRecordId, setCurrentRecordId] = useState<number | null>(null)
+
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const activeEndRef = useRef(0)
+  const activeIndexRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // 释放上一次的 Object URL,避免内存泄漏
+  // 💡 新增：页面加载时，拉取历史记录
+  useEffect(() => {
+    loadHistory()
+  }, [])
+
+  async function loadHistory() {
+    try {
+      const records = await getAllRecords()
+      setHistoryList(records)
+    } catch (err) {
+      console.error('读取历史记录失败', err)
+    }
+  }
+
+  // 释放上一次的 Object URL
   useEffect(() => {
     return () => {
       if (audioUrl) URL.revokeObjectURL(audioUrl)
     }
   }, [audioUrl])
 
-  // ---------- 音频播放控制(互斥逻辑) ----------
-  /** 切断当前播放,复位状态 */
+  // ---------- 音频播放控制 ----------
   function stopPlayback() {
     audioRef.current?.pause()
     activeIndexRef.current = null
     setPlayingIndex(null)
   }
 
-  /** 播放指定句:先切断上一句,再从头播放本句 */
   function playSentence(index: number) {
     const audio = audioRef.current
     const seg = sentences[index]
     if (!audio || !seg) return
 
-    // 互斥:无论之前哪句在播,先切断
     audio.pause()
     audio.currentTime = seg.start
     activeIndexRef.current = index
@@ -65,13 +71,11 @@ export default function AudioProcessor() {
     setPlayingIndex(index)
 
     audio.play().catch(() => {
-      // 自动播放被浏览器拦截等情况,回滚高亮
       activeIndexRef.current = null
       setPlayingIndex(null)
     })
   }
 
-  /** 点 D 按钮:已播放本句则停止,否则播放 */
   function handlePlay(index: number) {
     if (activeIndexRef.current === index) {
       stopPlayback()
@@ -80,7 +84,6 @@ export default function AudioProcessor() {
     playSentence(index)
   }
 
-  /** 播放进度监听:到达该句 end 时自动暂停 */
   function handleTimeUpdate() {
     const audio = audioRef.current
     if (!audio || activeIndexRef.current === null) return
@@ -89,7 +92,6 @@ export default function AudioProcessor() {
     }
   }
 
-  /** 音频自然播完(最后一句 end 之后)兜底复位 */
   function handleAudioEnded() {
     stopPlayback()
   }
@@ -99,27 +101,25 @@ export default function AudioProcessor() {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // 仅允许 .mp3
     if (!file.name.toLowerCase().endsWith('.mp3')) {
       setError('仅支持上传 .mp3 文件')
       setStatus('error')
       return
     }
 
-    stopPlayback() // 切换文件前先停止当前播放
-
-    // 释放旧 URL,为新文件创建 Object URL(供本地预览播放)
+    stopPlayback()
     if (audioUrl) URL.revokeObjectURL(audioUrl)
+    
+    // 生成临时预览 URL
     const url = URL.createObjectURL(file)
-
     setAudioUrl(url)
     setFileName(file.name)
     setSentences([])
     setPlayingIndex(null)
     setError('')
     setStatus('loading')
+    setCurrentRecordId(null)
 
-    // FormData 上传,字段名为 file
     const formData = new FormData()
     formData.append('file', file)
 
@@ -127,74 +127,121 @@ export default function AudioProcessor() {
       const res = await fetch(API_URL, { method: 'POST', body: formData })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
-      if (json.code !== 200) {
-        throw new Error(json?.message || `接口返回 code=${json.code}`)
-      }
-      setSentences(Array.isArray(json.data) ? json.data : [])
+      if (json.code !== 200) throw new Error(json?.message || `接口返回 code=${json.code}`)
+      
+      const parsedSentences = Array.isArray(json.data) ? json.data : []
+      setSentences(parsedSentences)
       setStatus('ready')
+
+      // 💡 新增：解析成功后，把音频和字幕存入 IndexedDB
+      const newRecord = await saveRecord(file.name, parsedSentences, file)
+      setCurrentRecordId(newRecord.id)
+      loadHistory() // 刷新历史列表
+
     } catch (err: any) {
       setError(`解析失败：${err?.message || '未知错误'}`)
       setStatus('error')
     }
   }
 
+  // 💡 新增：点击历史记录列表中的某一项
+  function handleSelectHistory(record: AudioRecord) {
+    stopPlayback()
+    if (audioUrl) URL.revokeObjectURL(audioUrl)
+    
+    // 从 IndexedDB 取出 Blob，重新生成 URL 播放
+    const url = URL.createObjectURL(record.audioBlob)
+    setAudioUrl(url)
+    setFileName(record.fileName)
+    setSentences(record.sentences)
+    setStatus('ready')
+    setCurrentRecordId(record.id)
+  }
+
+  // 💡 新增：删除历史记录
+  async function handleDeleteHistory(e: React.MouseEvent, id: number) {
+    e.stopPropagation() // 阻止冒泡，防止同时触发选中
+    if (!confirm('确定要删除这条记录吗？')) return
+
+    await deleteRecord(id)
+    loadHistory() // 刷新列表
+
+    // 如果删除的正好是当前正在看的，清空当前页面
+    if (currentRecordId === id) {
+      stopPlayback()
+      if (audioUrl) URL.revokeObjectURL(audioUrl)
+      setAudioUrl('')
+      setFileName('')
+      setSentences([])
+      setStatus('idle')
+      setCurrentRecordId(null)
+    }
+  }
+
   return (
-    <div className="audio-processor">
-      {/* 上传区 */}
-      <div className="ap-upload-area">
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".mp3,audio/mpeg"
-          onChange={handleFileChange}
-          hidden
-        />
-        <button className="tp-btn tp-btn-primary" onClick={() => fileInputRef.current?.click()}>
-          🎵 上传 MP3 音频
-        </button>
-        {fileName && <span className="ap-file-name">{fileName}</span>}
-      </div>
-
-      {/* Loading 状态 */}
-      {status === 'loading' && <p className="ap-status">⏳ 正在解析音频…</p>}
-      {error && <p className="tp-error">{error}</p>}
-
-      {/* 隐藏的 audio 标签:src 绑定本地 Object URL */}
-      <audio
-        ref={audioRef}
-        src={audioUrl}
-        onTimeUpdate={handleTimeUpdate}
-        onEnded={handleAudioEnded}
-      />
-
-      {/* 句子列表 & 点读 */}
-      {status === 'ready' && sentences.length > 0 && (
-        <ul className="ap-sentence-list">
-          {sentences.map((s, i) => (
+    <div className="audio-processor" style={{ display: 'flex', gap: '20px' }}>
+      
+      {/* 💡 新增：左侧历史记录栏 */}
+      <div style={{ width: '250px', borderRight: '1px solid #eee', paddingRight: '10px' }}>
+        <h3>📚 历史记录</h3>
+        {historyList.length === 0 && <p style={{color: '#888', fontSize: '14px'}}>暂无记录</p>}
+        <ul style={{ listStyle: 'none', padding: 0 }}>
+          {historyList.map(record => (
             <li
-              key={i}
-              className={`ap-sentence-row${playingIndex === i ? ' ap-sentence-row--active' : ''}`}
+              key={record.id}
+              onClick={() => handleSelectHistory(record)}
+              style={{
+                padding: '8px', cursor: 'pointer', display: 'flex', justifyContent: 'space-between',
+                backgroundColor: currentRecordId === record.id ? '#e6f7ff' : 'transparent',
+                borderRadius: '4px', marginBottom: '4px', fontSize: '14px'
+              }}
             >
-              {/* D 按钮:播放本句 */}
-              <button
-                className="ap-play-btn"
-                onClick={() => handlePlay(i)}
-                title="点击播放本句"
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                {record.fileName}
+              </span>
+              <button 
+                onClick={(e) => handleDeleteHistory(e, record.id)}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'red' }}
               >
-                {playingIndex === i ? '⏸' : '▶'}
+                ✕
               </button>
-              {/* 这里引入模块 B 的拆词组件:把句子文本拆成可点击的单词,点击弹出释义 */}
-              <div className="ap-sentence-text">
-                <WordTokens text={s.text} />
-              </div>
             </li>
           ))}
         </ul>
-      )}
+      </div>
 
-      {status === 'ready' && sentences.length === 0 && (
-        <p className="ap-status">未解析到任何句子。</p>
-      )}
+      {/* 右侧主内容区 */}
+      <div style={{ flex: 1 }}>
+        <div className="ap-upload-area">
+          <input ref={fileInputRef} type="file" accept=".mp3,audio/mpeg" onChange={handleFileChange} hidden />
+          <button className="tp-btn tp-btn-primary" onClick={() => fileInputRef.current?.click()}>
+            🎵 上传 MP3 音频
+          </button>
+          {fileName && <span className="ap-file-name" style={{ marginLeft: '10px' }}>{fileName}</span>}
+        </div>
+
+        {status === 'loading' && <p className="ap-status">⏳ 正在解析音频…</p>}
+        {error && <p className="tp-error">{error}</p>}
+
+        <audio ref={audioRef} src={audioUrl} onTimeUpdate={handleTimeUpdate} onEnded={handleAudioEnded} />
+
+        {status === 'ready' && sentences.length > 0 && (
+          <ul className="ap-sentence-list">
+            {sentences.map((s, i) => (
+              <li key={i} className={`ap-sentence-row${playingIndex === i ? ' ap-sentence-row--active' : ''}`}>
+                <button className="ap-play-btn" onClick={() => handlePlay(i)} title="点击播放本句">
+                  {playingIndex === i ? '⏸' : '▶'}
+                </button>
+                <div className="ap-sentence-text">
+                  <WordTokens text={s.text} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {status === 'ready' && sentences.length === 0 && <p className="ap-status">未解析到任何句子。</p>}
+      </div>
     </div>
   )
 }

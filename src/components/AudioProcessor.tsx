@@ -4,6 +4,10 @@ import WordTokens from './WordTokens'
 import { saveRecord, getAllRecords, deleteRecord } from '../utils/db'
 import type { AudioRecord } from '../utils/db'
 
+import GrammarModal from './GrammarModal' 
+import { getGrammarCache, saveGrammarCache } from '../utils/db'
+import type { GrammarAnalysis } from '../utils/db'
+
 // ---------- 类型 ----------
 interface Sentence {
   text: string
@@ -21,6 +25,11 @@ export default function AudioProcessor() {
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState('')
   const [playingIndex, setPlayingIndex] = useState<number | null>(null)
+
+  // 💡 新增：D 弹窗相关状态
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [grammarData, setGrammarData] = useState<GrammarAnalysis | null>(null)
 
   // 💡 新增：历史记录列表状态
   const [historyList, setHistoryList] = useState<AudioRecord[]>([])
@@ -144,6 +153,41 @@ export default function AudioProcessor() {
     }
   }
 
+
+    // 💡 新增：点击 D 按钮的分析逻辑
+  async function handleAnalyze(text: string) {
+    setIsModalOpen(true)
+    setGrammarData(null)
+
+    // 1. 先查本地缓存
+    const cached = await getGrammarCache(text)
+    if (cached) {
+      setGrammarData(cached)
+      return
+    }
+
+    // 2. 没缓存，去请求 Python 后端
+    setIsAnalyzing(true)
+    try {
+      const res = await fetch('http://127.0.0.1:8000/analyze-sentence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sentence: text })
+      })
+      const json = await res.json()
+      if (json.code === 200) {
+        setGrammarData(json.data)
+        await saveGrammarCache(json.data) // 存入 IndexedDB
+      } else {
+        alert('解析失败：' + json.message)
+      }
+    } catch (err) {
+      alert('请求大模型接口失败，请检查后端是否启动')
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }
+
   // 💡 新增：点击历史记录列表中的某一项
   function handleSelectHistory(record: AudioRecord) {
     stopPlayback()
@@ -227,7 +271,7 @@ export default function AudioProcessor() {
 
         {status === 'ready' && sentences.length > 0 && (
           <ul className="ap-sentence-list">
-            {sentences.map((s, i) => (
+                        {sentences.map((s, i) => (
               <li key={i} className={`ap-sentence-row${playingIndex === i ? ' ap-sentence-row--active' : ''}`}>
                 <button className="ap-play-btn" onClick={() => handlePlay(i)} title="点击播放本句">
                   {playingIndex === i ? '⏸' : '▶'}
@@ -235,6 +279,14 @@ export default function AudioProcessor() {
                 <div className="ap-sentence-text">
                   <WordTokens text={s.text} />
                 </div>
+                {/* 💡 新增：D 按钮 */}
+                <button 
+                  onClick={() => handleAnalyze(s.text)}
+                  style={{ marginLeft: '10px', padding: '2px 8px', cursor: 'pointer' }}
+                  title="语法分析"
+                >
+                  D
+                </button>
               </li>
             ))}
           </ul>
@@ -242,6 +294,13 @@ export default function AudioProcessor() {
 
         {status === 'ready' && sentences.length === 0 && <p className="ap-status">未解析到任何句子。</p>}
       </div>
+        {/* 💡 新增：挂载语法分析弹窗 */}
+      <GrammarModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        loading={isAnalyzing} 
+        data={grammarData} 
+      />
     </div>
   )
 }

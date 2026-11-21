@@ -7,19 +7,18 @@ interface Props {
   data: GrammarAnalysis | null
   playingIndex: number | null
   currentIndex: number
-  onPlay?: (rate: number) => void // 💡 改成接收一个 rate 参数
+  onPlay?: (rate: number) => void
 }
 
-// 给不同成分分配不同的颜色
+// 💡 升级：兼容大模型返回英文或中文的 type
 const getColor = (type: string) => {
-  switch (type) {
-    case 'subject': return '#fa8c16' // 主语：橙色
-    case 'predicate': return '#f5222d' // 谓语：红色
-    case 'object': return '#1890ff' // 宾语：蓝色
-    case 'adverbial': return '#52c41a' // 状语：绿色
-    case 'attribute': return '#722ed1' // 定语：紫色
-    default: return '#8c8c8c' // 其他：灰色
-  }
+  const t = (type || '').toLowerCase();
+  if (t.includes('subject') || t.includes('主语')) return '#fa8c16' // 橙色
+  if (t.includes('predicate') || t.includes('谓语')) return '#f5222d' // 红色
+  if (t.includes('object') || t.includes('宾语')) return '#1890ff' // 蓝色
+  if (t.includes('adverbial') || t.includes('状语')) return '#52c41a' // 绿色
+  if (t.includes('attribute') || t.includes('定语')) return '#722ed1' // 紫色
+  return '#8c8c8c' // 灰色
 }
 
 export default function GrammarModal({ isOpen, onClose, loading, data, playingIndex, currentIndex, onPlay }: Props) {
@@ -56,23 +55,16 @@ export default function GrammarModal({ isOpen, onClose, loading, data, playingIn
                 {playingIndex === currentIndex ? '⏸ 暂停原声' : '▶ 原速播放'}
               </button>
 
-              {/* 💡 新增：慢速播放按钮 */}
               <span style={{ fontSize: '14px', color: '#888' }}>慢速：</span>
               <button
                 onClick={() => onPlay?.(0.75)}
-                style={{
-                  padding: '4px 10px', cursor: 'pointer', borderRadius: '15px',
-                  border: '1px solid #d9d9d9', backgroundColor: '#fafafa'
-                }}
+                style={{ padding: '4px 10px', cursor: 'pointer', borderRadius: '15px', border: '1px solid #d9d9d9', backgroundColor: '#fafafa' }}
               >
                 0.75x
               </button>
               <button
                 onClick={() => onPlay?.(0.5)}
-                style={{
-                  padding: '4px 10px', cursor: 'pointer', borderRadius: '15px',
-                  border: '1px solid #d9d9d9', backgroundColor: '#fafafa'
-                }}
+                style={{ padding: '4px 10px', cursor: 'pointer', borderRadius: '15px', border: '1px solid #d9d9d9', backgroundColor: '#fafafa' }}
               >
                 0.5x
               </button>
@@ -82,18 +74,20 @@ export default function GrammarModal({ isOpen, onClose, loading, data, playingIn
             {/* 核心排版区 */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', justifyContent: 'center', marginTop: '20px' }}>
               {data.tokens?.map((token: any, idx: number) => {
-                // 查找这个单词属于哪个成分组
                 const group = data.groups?.find(g => g.indices.includes(idx));
-                const color = group ? getColor(group.type) : 'transparent';
-                // 生成极淡的背景色 (加上 '1A' 代表 10% 透明度)
-                const bgColor = group ? `${getColor(group.type)}1A` : 'transparent';
+                
+                // 💡 获取颜色和极淡的背景色
+                const color = group ? getColor(group.type) : '#e5e5e5';
+                const bgColor = group ? `${color}15` : '#f5f5f5'; // 15 代表极低的透明度
 
                 return (
                   <div key={idx} style={{
                     display: 'flex', flexDirection: 'column', alignItems: 'center',
-                    position: 'relative', padding: '10px 15px', borderRadius: '8px',
+                    position: 'relative', padding: '12px 18px', borderRadius: '12px',
                     backgroundColor: bgColor,
+                    border: `1px solid ${group ? color + '40' : '#e5e5e5'}`, // 淡淡的边框
                     transition: 'all 0.2s ease',
+                    marginBottom: token.inflection ? '10px' : '0'
                   }}>
                     {/* 音标 */}
                     <div style={{ fontSize: '13px', color: '#888', marginBottom: '8px', fontFamily: 'monospace' }}>
@@ -103,9 +97,7 @@ export default function GrammarModal({ isOpen, onClose, loading, data, playingIn
                     <div style={{ fontSize: '28px', fontWeight: 'bold', color: '#333' }}>
                       {token.word}
                     </div>
-                    {/* 颜色下划线 */}
-                    <div style={{ height: '3px', width: '100%', backgroundColor: color, marginTop: '8px', borderRadius: '2px' }} />
-
+                    
                     {/* 中文释义 */}
                     <div style={{ fontSize: '14px', color: '#555', marginTop: '8px' }}>
                       {token.meaning}
@@ -114,6 +106,24 @@ export default function GrammarModal({ isOpen, onClose, loading, data, playingIn
                     <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
                       {token.pos}
                     </div>
+
+                    {/* 💡 变形考点标签（改成实心小标签） */}
+                    {token.inflection && token.inflection.type && (
+                      <div style={{
+                        marginTop: '8px',
+                        backgroundColor: '#fff7e6',
+                        color: '#d46b08',
+                        padding: '2px 8px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        border: '1px solid #ffd591',
+                        cursor: 'help'
+                      }}
+                        title={token.inflection.detail}
+                      >
+                        {token.inflection.type}
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -123,15 +133,18 @@ export default function GrammarModal({ isOpen, onClose, loading, data, playingIn
             <div style={{ marginTop: '50px', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '8px' }}>
               <h4 style={{ marginBottom: '10px' }}>句法结构</h4>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
-                {data.groups?.map((group: any, idx: number) => (
-                  <div key={idx} style={{
-                    padding: '6px 12px', borderRadius: '6px', border: `1px solid ${getColor(group.type)}`,
-                    backgroundColor: `${getColor(group.type)}10`, color: getColor(group.type)
-                  }}>
-                    <strong>{group.name}：</strong>
-                    {group.indices.map((i: number) => data.tokens[i]?.word).join(' ')}
-                  </div>
-                ))}
+                {data.groups?.map((group: any, idx: number) => {
+                  const color = getColor(group.type);
+                  return (
+                    <div key={idx} style={{
+                      padding: '6px 12px', borderRadius: '6px', border: `1px solid ${color}`,
+                      backgroundColor: `${color}10`, color: color
+                    }}>
+                      <strong>{group.name}：</strong>
+                      {group.indices.map((i: number) => data.tokens[i]?.word).join(' ')}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>

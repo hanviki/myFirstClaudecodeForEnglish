@@ -63,12 +63,15 @@ export default function AudioProcessor() {
     setPlayingIndex(null)
   }
 
-  function playSentence(index: number) {
+  function playSentence(index: number, rate: number = 1) {
     const audio = audioRef.current
     const seg = sentences[index]
     if (!audio || !seg) return
 
     audio.pause()
+    // 💡 设置播放速率
+    audio.playbackRate = rate; 
+    
     audio.currentTime = seg.start
     activeIndexRef.current = index
     activeEndRef.current = seg.end
@@ -80,12 +83,12 @@ export default function AudioProcessor() {
     })
   }
 
-  function handlePlay(index: number) {
+    function handlePlay(index: number) {
     if (activeIndexRef.current === index) {
       stopPlayback()
       return
     }
-    playSentence(index)
+    playSentence(index, 1) // 💡 默认原速
   }
 
   function handleTimeUpdate() {
@@ -285,20 +288,20 @@ export default function AudioProcessor() {
       </div>
 
       {/* 挂载语法分析弹窗，传入播放相关属性 */}
-      <GrammarModal 
+           <GrammarModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
         loading={isAnalyzing} 
         data={grammarData} 
         playingIndex={playingIndex}
         currentIndex={sentences.findIndex(s => s.text === grammarData?.text)}
-        onPlay={() => {
+        onPlay={(rate) => { // 💡 接收传来的速率
           const idx = sentences.findIndex(s => s.text === grammarData?.text);
           if (idx !== -1) {
-            if (activeIndexRef.current === idx) {
+            if (activeIndexRef.current === idx && rate === 1) { // 如果点的是同一句且原速，则暂停
               stopPlayback();
             } else {
-              playSentence(idx);
+              playSentence(idx, rate);
             }
           }
         }}
